@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memory Companion</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Memory Companion</h1>
+      <p class="tagline">
+        Capture your daily moments so you can revisit them whenever you need a
+        gentle reminder.
+      </p>
+    </header>
+
+    <main>
+      <section class="form-card" aria-labelledby="add-event-title">
+        <h2 id="add-event-title">Add a new memory</h2>
+        <form id="event-form">
+          <div class="form-group">
+            <label for="event-date">Date</label>
+            <input type="date" id="event-date" name="eventDate" required />
+          </div>
+          <div class="form-group">
+            <label for="event-time">Time</label>
+            <input type="time" id="event-time" name="eventTime" />
+          </div>
+          <div class="form-group">
+            <label for="event-title">Title</label>
+            <input
+              type="text"
+              id="event-title"
+              name="eventTitle"
+              placeholder="Breakfast with Alex"
+              maxlength="80"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label for="event-details">Details</label>
+            <textarea
+              id="event-details"
+              name="eventDetails"
+              rows="4"
+              placeholder="We met at the park and talked about the weekend plans."
+            ></textarea>
+          </div>
+          <div class="form-actions">
+            <button type="submit">Save memory</button>
+            <button type="button" id="reset-form" class="secondary">
+              Clear
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="history-card" aria-labelledby="history-title">
+        <div class="history-header">
+          <div>
+            <h2 id="history-title">Memory history</h2>
+            <p class="history-subtitle">
+              Select a date to revisit what happened.
+            </p>
+          </div>
+          <div class="controls">
+            <label class="controls__label" for="filter-date">Go to date</label>
+            <input type="date" id="filter-date" />
+            <label class="controls__label" for="search-text">Search</label>
+            <input
+              type="search"
+              id="search-text"
+              placeholder="Type a word like 'doctor'"
+              aria-label="Search memories"
+            />
+            <button type="button" id="export-events" class="secondary">
+              Export
+            </button>
+          </div>
+        </div>
+        <div id="history-list" class="history-list" aria-live="polite"></div>
+        <template id="event-template">
+          <article class="event-card">
+            <header>
+              <h3 class="event-title"></h3>
+              <time class="event-time"></time>
+            </header>
+            <p class="event-details"></p>
+          </article>
+        </template>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Tip: try adding memories as soon as they happen. Reviewing them each
+        evening can reinforce your day.
+      </p>
+    </footer>
+
+    <dialog id="export-dialog">
+      <form method="dialog">
+        <h2>Exported memories</h2>
+        <p>
+          Copy the text below into a safe place or share it with a care partner.
+        </p>
+        <textarea id="export-output" rows="12" readonly></textarea>
+        <div class="dialog-actions">
+          <button value="close" class="secondary">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="script.js" type="module"></script>
+  </body>
+</html>

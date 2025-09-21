@@ -1,6 +1,6 @@
-const storageKeyBase = "memory-companion-events";
-const accountsKey = "memory-companion-users";
-const activeUserKey = "memory-companion-active-user";
+const STORAGE_PREFIX = "memory-companion";
+const ACCOUNTS_KEY = `${STORAGE_PREFIX}-accounts`;
+const SESSION_KEY = `${STORAGE_PREFIX}-active-user`;
 
 const selectors = {
   form: document.querySelector("#event-form"),
@@ -32,29 +32,34 @@ const selectors = {
   authMessage: document.querySelector("#auth-message"),
 };
 
-let currentUser = null;
-let authMode = "signin";
+const state = {
+  user: null,
+  authMode: "signin",
+};
 
 document.addEventListener("DOMContentLoaded", () => {
-  selectors.date.value = today();
-  selectors.filterDate.value = today();
-  restoreActiveUser();
+  const todayValue = today();
+  selectors.date.value = todayValue;
+  selectors.filterDate.value = todayValue;
+
+  restoreSession();
   updateAuthUI();
   renderHistory();
-  if (!currentUser) {
+
+  if (!state.user) {
     openAuthDialog();
   }
 });
 
 selectors.form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!currentUser) {
+
+  if (!state.user) {
     openAuthDialog();
     return;
   }
 
-  const memory = getFormData();
-
+  const memory = getMemoryFromForm();
   if (!memory.title.trim()) {
     selectors.title.focus();
     return;
@@ -64,11 +69,12 @@ selectors.form.addEventListener("submit", (event) => {
   events.push(memory);
   saveEvents(events);
 
-  renderHistory(memory.date);
   selectors.form.reset();
   selectors.date.value = memory.date;
   selectors.filterDate.value = memory.date;
   selectors.title.focus();
+
+  renderHistory();
 });
 
 selectors.reset.addEventListener("click", () => {
@@ -78,32 +84,30 @@ selectors.reset.addEventListener("click", () => {
 });
 
 selectors.filterDate.addEventListener("change", () => {
-  if (!currentUser) {
+  if (!state.user) {
     openAuthDialog();
     return;
   }
-  renderHistory(selectors.filterDate.value);
+  renderHistory();
 });
 
 selectors.searchText.addEventListener("input", () => {
-  if (!currentUser) {
+  if (!state.user) {
     return;
   }
-  renderHistory(selectors.filterDate.value);
+  renderHistory();
 });
 
 selectors.exportButton.addEventListener("click", () => {
-  if (!currentUser) {
+  if (!state.user) {
     openAuthDialog();
     return;
   }
 
   const events = loadEvents();
-  if (!events.length) {
-    selectors.exportOutput.value = "No memories saved yet.";
-  } else {
-    selectors.exportOutput.value = JSON.stringify(events, null, 2);
-  }
+  selectors.exportOutput.value = events.length
+    ? JSON.stringify(events, null, 2)
+    : "No memories saved yet.";
   selectors.exportDialog.showModal();
 });
 
@@ -113,23 +117,27 @@ selectors.exportDialog.addEventListener("close", () => {
 
 selectors.historyList.addEventListener("click", (event) => {
   const button = event.target.closest(".event-delete");
-  if (!button || !currentUser) {
+  if (!button || !state.user) {
     return;
   }
 
   const card = button.closest(".event-card");
-  const id = card?.getAttribute("data-id");
-  if (!id) return;
+  const id = card?.dataset.id;
+  if (!id) {
+    return;
+  }
 
-  const confirmation = window.confirm("Delete this memory? This action cannot be undone.");
-  if (!confirmation) return;
+  const confirmed = window.confirm("Delete this memory? This cannot be undone.");
+  if (!confirmed) {
+    return;
+  }
 
   deleteMemory(id);
-  renderHistory(selectors.filterDate.value);
+  renderHistory();
 });
 
 selectors.authButton.addEventListener("click", () => {
-  if (currentUser) {
+  if (state.user) {
     signOut();
   } else {
     openAuthDialog();
@@ -137,7 +145,7 @@ selectors.authButton.addEventListener("click", () => {
 });
 
 selectors.authModeToggle.addEventListener("click", () => {
-  const nextMode = authMode === "signin" ? "create" : "signin";
+  const nextMode = state.authMode === "signin" ? "create" : "signin";
   setAuthMode(nextMode);
   selectors.authForm.reset();
   showAuthMessage("");
@@ -154,8 +162,12 @@ selectors.authDialog.addEventListener("close", () => {
   setAuthMode("signin");
 });
 
-selectors.authForm.addEventListener("submit", async (event) => {
+selectors.authForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  handleAuthSubmit();
+});
+
+async function handleAuthSubmit() {
   const name = selectors.authName.value.trim();
   const pin = selectors.authPin.value.trim();
 
@@ -164,7 +176,7 @@ selectors.authForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  if (authMode === "create") {
+  if (state.authMode === "create") {
     const confirmPin = selectors.authConfirmPin.value.trim();
     if (!confirmPin) {
       showAuthMessage("Please confirm your passcode.");
@@ -180,12 +192,11 @@ selectors.authForm.addEventListener("submit", async (event) => {
   } else {
     await signIn(name, pin);
   }
-});
+}
 
-function getFormData() {
-  const id = makeId("memory");
+function getMemoryFromForm() {
   return {
-    id,
+    id: makeId("memory"),
     date: selectors.date.value || today(),
     time: selectors.time.value,
     title: selectors.title.value.trim(),
@@ -195,62 +206,81 @@ function getFormData() {
 }
 
 function loadEvents() {
-  if (!currentUser) return [];
-  const storageKey = `${storageKeyBase}-${currentUser.id}`;
+  if (!state.user) {
+    return [];
+  }
+
+  const storageKey = `${STORAGE_PREFIX}-events-${state.user.id}`;
   try {
     const raw = localStorage.getItem(storageKey);
-    if (!raw) return [];
+    if (!raw) {
+      return [];
+    }
     const data = JSON.parse(raw);
-    if (!Array.isArray(data)) return [];
-    return data;
+    return Array.isArray(data) ? data : [];
   } catch (error) {
-    console.error("Unable to load events", error);
+    console.error("Unable to load memories", error);
     return [];
   }
 }
 
 function saveEvents(events) {
-  if (!currentUser) return;
-  const storageKey = `${storageKeyBase}-${currentUser.id}`;
+  if (!state.user) {
+    return;
+  }
+
+  const storageKey = `${STORAGE_PREFIX}-events-${state.user.id}`;
   localStorage.setItem(storageKey, JSON.stringify(events));
 }
 
 function deleteMemory(id) {
   const events = loadEvents();
-  const updated = events.filter((event) => event.id !== id);
-  saveEvents(updated);
+  const next = events.filter((event) => event.id !== id);
+  saveEvents(next);
 }
 
-function renderHistory(activeDate = today()) {
-  if (!currentUser) {
-    selectors.historyList.innerHTML = "";
+function renderHistory() {
+  selectors.historyList.innerHTML = "";
+
+  if (!state.user) {
     selectors.historyList.appendChild(renderAuthPrompt());
     return;
   }
 
   const events = loadEvents();
+  const activeDate = selectors.filterDate.value || today();
   const searchTerm = selectors.searchText.value.trim().toLowerCase();
+
   const filtered = events
     .filter((event) => {
-      if (searchTerm) {
-        const text = `${event.title} ${event.details}`.toLowerCase();
-        return text.includes(searchTerm);
+      if (!searchTerm) {
+        return true;
       }
-      return true;
+      const text = `${event.title} ${event.details}`.toLowerCase();
+      return text.includes(searchTerm);
     })
-    .sort((a, b) => (a.date === b.date ? compareTime(a.time, b.time) : b.date.localeCompare(a.date)));
+    .sort((a, b) => {
+      if (a.date === b.date) {
+        return compareTime(a.time, b.time);
+      }
+      return b.date.localeCompare(a.date);
+    });
 
   const grouped = groupByDate(filtered);
-  selectors.historyList.innerHTML = "";
 
   if (!grouped.length) {
     selectors.historyList.appendChild(renderEmptyState(Boolean(searchTerm)));
     return;
   }
 
+  const todayValue = today();
+
   grouped.forEach(({ date, items }) => {
-    const groupElement = document.createElement("section");
-    groupElement.className = "day-group";
+    const group = document.createElement("section");
+    group.className = "day-group";
+    if (date === activeDate) {
+      group.classList.add("day-group--selected");
+    }
 
     const header = document.createElement("header");
     header.className = "day-group__header";
@@ -258,10 +288,17 @@ function renderHistory(activeDate = today()) {
     const title = document.createElement("div");
     title.className = "day-group__title";
     title.textContent = readableDate(date);
-    if (date === activeDate) {
+
+    if (date === todayValue) {
       const badge = document.createElement("span");
-      badge.textContent = "Today";
       badge.className = "badge";
+      badge.textContent = "Today";
+      title.append(" ");
+      title.appendChild(badge);
+    } else if (date === activeDate) {
+      const badge = document.createElement("span");
+      badge.className = "badge badge--selected";
+      badge.textContent = "Selected day";
       title.append(" ");
       title.appendChild(badge);
     }
@@ -272,15 +309,16 @@ function renderHistory(activeDate = today()) {
 
     header.appendChild(title);
     header.appendChild(count);
+    group.appendChild(header);
 
-    groupElement.appendChild(header);
+    items
+      .sort((first, second) => compareTime(first.time, second.time))
+      .forEach((memory) => {
+        const card = renderMemory(memory);
+        group.appendChild(card);
+      });
 
-    items.forEach((memory) => {
-      const node = renderEvent(memory);
-      groupElement.appendChild(node);
-    });
-
-    selectors.historyList.appendChild(groupElement);
+    selectors.historyList.appendChild(group);
   });
 }
 
@@ -294,24 +332,20 @@ function groupByDate(events) {
 
   return Array.from(map.entries())
     .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([date, items]) => ({
-      date,
-      items: items.sort((first, second) => compareTime(first.time, second.time)),
-    }));
+    .map(([date, items]) => ({ date, items }));
 }
 
-function renderEvent(memory) {
+function renderMemory(memory) {
   const fragment = selectors.template.content.cloneNode(true);
   const card = fragment.querySelector(".event-card");
   const title = fragment.querySelector(".event-title");
   const time = fragment.querySelector(".event-time");
   const details = fragment.querySelector(".event-details");
 
+  card.dataset.id = memory.id;
   title.textContent = memory.title;
   time.textContent = memory.time ? formatTime(memory.time) : "Time unknown";
   details.textContent = memory.details || "";
-
-  card.setAttribute("data-id", memory.id);
 
   return fragment;
 }
@@ -320,35 +354,48 @@ function renderEmptyState(hasSearch) {
   const container = document.createElement("div");
   container.className = "empty-state";
   container.innerHTML = hasSearch
-    ? `<strong>No matches found.</strong>Try searching with different words or clearing the search box.`
-    : `<strong>No memories yet.</strong>Add your first memory using the form on the left.`;
+    ? `<strong>No matches found.</strong> Try searching for another word or clearing the search box.`
+    : `<strong>No memories yet.</strong> Add your first memory using the form on the left.`;
   return container;
 }
 
 function renderAuthPrompt() {
   const container = document.createElement("div");
   container.className = "empty-state";
-  container.innerHTML = `<strong>Sign in to begin.</strong>Your memories are kept safe under your own passcode.`;
+  container.innerHTML = `<strong>Sign in to begin.</strong> Your memories stay private to your profile.`;
   return container;
 }
 
 function formatTime(value) {
-  if (!value) return "";
+  if (!value) {
+    return "";
+  }
+
   const [hour, minute] = value.split(":").map(Number);
-  if (Number.isNaN(hour) || Number.isNaN(minute)) return value;
-  const date = new Date();
-  date.setHours(hour);
-  date.setMinutes(minute);
+  if ([hour, minute].some((num) => Number.isNaN(num))) {
+    return value;
+  }
+
+  const time = new Date();
+  time.setHours(hour);
+  time.setMinutes(minute);
+
   return new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  }).format(time);
 }
 
 function compareTime(first, second) {
-  if (!first && !second) return 0;
-  if (!first) return 1;
-  if (!second) return -1;
+  if (!first && !second) {
+    return 0;
+  }
+  if (!first) {
+    return 1;
+  }
+  if (!second) {
+    return -1;
+  }
   return first.localeCompare(second);
 }
 
@@ -360,9 +407,15 @@ function makeId(prefix = "memory") {
 }
 
 function readableDate(value) {
-  if (!value) return "Unknown date";
+  if (!value) {
+    return "Unknown date";
+  }
+
   const [year, month, day] = value.split("-").map(Number);
-  if ([year, month, day].some((num) => Number.isNaN(num))) return value;
+  if ([year, month, day].some((num) => Number.isNaN(num))) {
+    return value;
+  }
+
   const date = new Date(year, month - 1, day);
   return new Intl.DateTimeFormat(undefined, {
     weekday: "long",
@@ -373,31 +426,29 @@ function readableDate(value) {
 }
 
 function today() {
-  const now = new Date();
-  return now.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
 }
 
 function setAuthMode(mode) {
-  authMode = mode;
-  const isCreate = mode === "create";
-  selectors.authDialogTitle.textContent = isCreate ? "Create account" : "Sign in";
-  selectors.authDialogDescription.textContent = isCreate
+  state.authMode = mode;
+  const creating = mode === "create";
+  selectors.authDialogTitle.textContent = creating ? "Create account" : "Sign in";
+  selectors.authDialogDescription.textContent = creating
     ? "Create a profile so your memories stay private to you."
     : "Enter your name and passcode to continue.";
-  selectors.authSubmit.textContent = isCreate ? "Create account" : "Sign in";
-  selectors.authModeToggle.textContent = isCreate
+  selectors.authSubmit.textContent = creating ? "Create account" : "Sign in";
+  selectors.authModeToggle.textContent = creating
     ? "Already have an account? Sign in"
     : "Need an account? Create one";
-  selectors.authConfirmGroup.hidden = !isCreate;
-  selectors.authConfirmPin.required = isCreate;
+  selectors.authConfirmGroup.hidden = !creating;
+  selectors.authConfirmPin.required = creating;
 }
 
-function openAuthDialog(mode = authMode) {
-  selectors.authForm.reset();
-  showAuthMessage("");
+function openAuthDialog(mode = state.authMode) {
   setAuthMode(mode);
-  if (mode === "signin" && currentUser) {
-    selectors.authName.value = currentUser.name;
+  showAuthMessage("");
+  if (mode === "signin" && state.user) {
+    selectors.authName.value = state.user.name;
   }
   if (!selectors.authDialog.open) {
     selectors.authDialog.showModal();
@@ -411,45 +462,51 @@ function showAuthMessage(message) {
 }
 
 function updateAuthUI() {
-  if (currentUser) {
-    selectors.authStatusName.textContent = `Signed in as ${currentUser.name}`;
+  if (state.user) {
+    selectors.authStatusName.textContent = `Signed in as ${state.user.name}`;
     selectors.authButton.textContent = "Sign out";
   } else {
     selectors.authStatusName.textContent = "Not signed in";
     selectors.authButton.textContent = "Sign in";
   }
-  setFormEnabled(Boolean(currentUser));
+
+  setAppEnabled(Boolean(state.user));
 }
 
-function setFormEnabled(enabled) {
-  const elements = selectors.form.querySelectorAll("input, textarea, button");
-  elements.forEach((element) => {
-    element.disabled = !enabled;
+function setAppEnabled(enabled) {
+  const fields = selectors.form.querySelectorAll("input, textarea, button");
+  fields.forEach((field) => {
+    field.disabled = !enabled;
   });
+
   selectors.filterDate.disabled = !enabled;
   selectors.searchText.disabled = !enabled;
   selectors.exportButton.disabled = !enabled;
 }
 
-function restoreActiveUser() {
-  const activeId = localStorage.getItem(activeUserKey);
-  if (!activeId) return;
+function restoreSession() {
+  const activeId = localStorage.getItem(SESSION_KEY);
+  if (!activeId) {
+    return;
+  }
+
   const accounts = loadAccounts();
   const account = accounts.find((user) => user.id === activeId);
   if (account) {
-    currentUser = account;
+    state.user = account;
   } else {
-    localStorage.removeItem(activeUserKey);
+    localStorage.removeItem(SESSION_KEY);
   }
 }
 
 function loadAccounts() {
   try {
-    const raw = localStorage.getItem(accountsKey);
-    if (!raw) return [];
+    const raw = localStorage.getItem(ACCOUNTS_KEY);
+    if (!raw) {
+      return [];
+    }
     const data = JSON.parse(raw);
-    if (!Array.isArray(data)) return [];
-    return data;
+    return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error("Unable to load accounts", error);
     return [];
@@ -457,21 +514,22 @@ function loadAccounts() {
 }
 
 function saveAccounts(accounts) {
-  localStorage.setItem(accountsKey, JSON.stringify(accounts));
+  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
 }
 
 async function createAccount(name, pin) {
   const accounts = loadAccounts();
   const exists = accounts.some((account) => account.name.toLowerCase() === name.toLowerCase());
+
   if (exists) {
-    showAuthMessage("That name is already in use. Try a different one or sign in.");
+    showAuthMessage("That name is already in use. Try another or sign in.");
     return;
   }
 
   const account = {
     id: makeId("user"),
     name,
-    pinHash: await hashString(pin),
+    pinHash: await hashPasscode(pin),
     createdAt: new Date().toISOString(),
   };
 
@@ -490,7 +548,7 @@ async function signIn(name, pin) {
     return;
   }
 
-  const hash = await hashString(pin);
+  const hash = await hashPasscode(pin);
   if (hash !== account.pinHash) {
     showAuthMessage("Incorrect passcode. Please try again.");
     return;
@@ -501,19 +559,19 @@ async function signIn(name, pin) {
 }
 
 function activateUser(account) {
-  currentUser = account;
-  localStorage.setItem(activeUserKey, account.id);
-  updateAuthUI();
+  state.user = account;
+  localStorage.setItem(SESSION_KEY, account.id);
   selectors.form.reset();
   selectors.date.value = today();
   selectors.filterDate.value = today();
   selectors.searchText.value = "";
+  updateAuthUI();
   renderHistory();
 }
 
 function signOut() {
-  currentUser = null;
-  localStorage.removeItem(activeUserKey);
+  state.user = null;
+  localStorage.removeItem(SESSION_KEY);
   selectors.form.reset();
   selectors.date.value = today();
   selectors.filterDate.value = today();
@@ -523,7 +581,7 @@ function signOut() {
   openAuthDialog();
 }
 
-async function hashString(value) {
+async function hashPasscode(value) {
   if (typeof crypto !== "undefined" && crypto.subtle && crypto.subtle.digest) {
     const encoder = new TextEncoder();
     const data = encoder.encode(value);
@@ -532,5 +590,6 @@ async function hashString(value) {
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("");
   }
+
   return value;
 }

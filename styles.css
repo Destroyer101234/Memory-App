@@ -208,6 +208,12 @@ button:hover {
   background: #f8faff;
 }
 
+.day-group--selected {
+  border-color: var(--primary);
+  background: #eef3ff;
+  box-shadow: 0 0 0 2px rgba(37, 92, 199, 0.1);
+}
+
 .day-group__header {
   display: flex;
   justify-content: space-between;
@@ -234,6 +240,11 @@ button:hover {
   color: var(--primary-dark);
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.badge--selected {
+  background: rgba(37, 92, 199, 0.25);
+  color: var(--primary);
 }
 
 .event-card {
